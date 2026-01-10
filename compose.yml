@@ -1,0 +1,157 @@
+services:
+  # NATSサーバー
+  nats-server:
+    build: .
+    container_name: nats-tls-server
+    ports:
+      - "4222:4222" # クライアント接続
+      - "8222:8222" # モニタリング
+      - "6222:6222" # クラスタリング
+    volumes:
+      - nats-certs:/etc/nats/certs
+      - nats-data:/data/jetstream
+    networks:
+      - nats-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ログ生成サービス (Go)
+  log-publisher:
+    build:
+      context: ./services/log-publisher
+      dockerfile: Dockerfile
+    container_name: log-publisher
+    depends_on:
+      nats-server:
+        condition: service_healthy
+    volumes:
+      - nats-certs:/etc/nats/certs:ro
+    networks:
+      - nats-network
+    environment:
+      - NATS_URL=nats://nats-server:4222
+      - NATS_CA_FILE=/etc/nats/certs/ca.pem
+      - NATS_CLIENT_CERT=/etc/nats/certs/nats-client-cert.pem
+      - NATS_CLIENT_KEY=/etc/nats/certs/nats-client-key.pem
+      - NATS_USER=test-user
+      - NATS_PASSWORD=test-password
+    restart: unless-stopped
+
+  # ログ処理サービス (Go)
+  log-processor:
+    build:
+      context: ./services/log-processor
+      dockerfile: Dockerfile
+    container_name: log-processor
+    depends_on:
+      nats-server:
+        condition: service_healthy
+    volumes:
+      - nats-certs:/etc/nats/certs:ro
+    networks:
+      - nats-network
+    environment:
+      - NATS_URL=nats://nats-server:4222
+      - NATS_CA_FILE=/etc/nats/certs/ca.pem
+      - NATS_CLIENT_CERT=/etc/nats/certs/nats-client-cert.pem
+      - NATS_CLIENT_KEY=/etc/nats/certs/nats-client-key.pem
+      - NATS_USER=test-user
+      - NATS_PASSWORD=test-password
+    restart: unless-stopped
+
+  # アラートサービス (Node.js)
+  alert-service:
+    build:
+      context: ./services/alert-service
+      dockerfile: Dockerfile
+    container_name: alert-service
+    depends_on:
+      nats-server:
+        condition: service_healthy
+    volumes:
+      - nats-certs:/etc/nats/certs:ro
+    networks:
+      - nats-network
+    environment:
+      - NATS_URL=nats://nats-server:4222
+      - NATS_CA_FILE=/etc/nats/certs/ca.pem
+      - NATS_CLIENT_CERT=/etc/nats/certs/nats-client-cert.pem
+      - NATS_CLIENT_KEY=/etc/nats/certs/nats-client-key.pem
+      - NATS_USER=test-user
+      - NATS_PASSWORD=test-password
+    restart: unless-stopped
+
+  # メトリクス集計サービス (Python)
+  metrics-aggregator:
+    build:
+      context: ./services/metrics-aggregator
+      dockerfile: Dockerfile
+    container_name: metrics-aggregator
+    depends_on:
+      nats-server:
+        condition: service_healthy
+    volumes:
+      - nats-certs:/etc/nats/certs:ro
+    networks:
+      - nats-network
+    environment:
+      - NATS_URL=nats://nats-server:4222
+      - NATS_CA_FILE=/etc/nats/certs/ca.pem
+      - NATS_CLIENT_CERT=/etc/nats/certs/nats-client-cert.pem
+      - NATS_CLIENT_KEY=/etc/nats/certs/nats-client-key.pem
+      - NATS_USER=test-user
+      - NATS_PASSWORD=test-password
+    restart: unless-stopped
+
+  # WebSocket Gateway (Go)
+  ws-gateway:
+    build:
+      context: ./services/ws-gateway
+      dockerfile: Dockerfile
+    container_name: ws-gateway
+    ports:
+      - "8080:8080"
+    depends_on:
+      nats-server:
+        condition: service_healthy
+    volumes:
+      - nats-certs:/etc/nats/certs:ro
+    networks:
+      - nats-network
+    environment:
+      - NATS_URL=nats://nats-server:4222
+      - NATS_CA_FILE=/etc/nats/certs/ca.pem
+      - NATS_CLIENT_CERT=/etc/nats/certs/nats-client-cert.pem
+      - NATS_CLIENT_KEY=/etc/nats/certs/nats-client-key.pem
+      - NATS_USER=test-user
+      - NATS_PASSWORD=test-password
+      - PORT=8080
+    restart: unless-stopped
+
+  # ダッシュボード (React + Vite)
+  dashboard:
+    build:
+      context: ./services/dashboard
+      dockerfile: Dockerfile
+    container_name: dashboard
+    ports:
+      - "3000:80"
+    depends_on:
+      - ws-gateway
+    networks:
+      - nats-network
+    restart: unless-stopped
+
+volumes:
+  nats-certs:
+    driver: local
+  nats-data:
+    driver: local
+
+networks:
+  nats-network:
+    driver: bridge

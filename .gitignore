@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+vendor/
+__pycache__/
+*.pyc
+*.pyo
+
+# Build outputs
+dist/
+build/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+*.test
+*.out
+go.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Docker volumes
+nats-data/
+nats-certs/
+
+# Playwright
+.playwright-mcp/
+
+# Test coverage
+coverage/
+*.cover
+*.coverage
+htmlcov/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

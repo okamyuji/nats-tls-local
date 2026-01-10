@@ -1,0 +1,12 @@
+{
+  "name": "alert-service",
+  "version": "1.0.0",
+  "description": "NATS Alert Service",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "nats": "^2.18.0"
+  }
+}
