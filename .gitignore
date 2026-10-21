@@ -16,7 +16,9 @@ build/
 # Go
 *.test
 *.out
-go.sum
+services/log-processor/log-processor
+services/log-publisher/log-publisher
+services/ws-gateway/ws-gateway
 
 # IDE
 .idea/
