@@ -296,25 +296,34 @@ func main() {
 
 	log.Println("Connected to NATS")
 
-	// Subscribe to NATS topics
+	if err := serve(js, hub, listenAddr()); err != nil {
+		log.Fatalf("WebSocket Gateway stopped: %v", err)
+	}
+}
+
+// serve subscribes the hub to NATS and serves HTTP on addr until the server fails.
+func serve(js nats.JetStreamContext, hub *Hub, addr string) error {
 	if err := subscribeToNATS(js, hub); err != nil {
-		log.Fatalf("Failed to subscribe: %v", err)
+		return err
 	}
 
-	// HTTP handlers
-	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+	log.Printf("WebSocket Gateway listening on %s", addr)
+	return http.ListenAndServe(addr, newMux(hub))
+}
+
+func newMux(hub *Hub) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(hub, w, r)
 	})
+	mux.HandleFunc("/health", healthHandler)
+	return mux
+}
 
-	http.HandleFunc("/health", healthHandler)
-
+func listenAddr() string {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-
-	log.Printf("WebSocket Gateway listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Fatalf("Server failed: %v", err)
-	}
+	return ":" + port
 }

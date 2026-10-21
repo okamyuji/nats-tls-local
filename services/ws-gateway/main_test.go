@@ -234,3 +234,65 @@ func TestSubscribeToNATS_wrapsSubscribeError(t *testing.T) {
 		t.Fatalf("err = %v, want wrapped dashboard error", err)
 	}
 }
+
+func TestListenAddr_defaultsTo8080(t *testing.T) {
+	t.Setenv("PORT", "")
+
+	if got := listenAddr(); got != ":8080" {
+		t.Fatalf("listenAddr = %q, want :8080", got)
+	}
+}
+
+func TestListenAddr_usesPortEnv(t *testing.T) {
+	t.Setenv("PORT", "9090")
+
+	if got := listenAddr(); got != ":9090" {
+		t.Fatalf("listenAddr = %q, want :9090", got)
+	}
+}
+
+func TestNewMux_servesHealthAndWebSocket(t *testing.T) {
+	captureLog(t)
+	hub := newHub()
+	go hub.run()
+	srv := httptest.NewServer(newMux(hub))
+	t.Cleanup(srv.Close)
+
+	res, err := http.Get(srv.URL + "/health")
+	if err != nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /health = %v, %v; want 200", res, err)
+	}
+	_ = res.Body.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/ws", nil)
+	if err != nil {
+		t.Fatalf("dial /ws: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	waitFor(t, func() bool { return clientCount(hub) == 1 })
+}
+
+func TestServe_returnsSubscribeError(t *testing.T) {
+	captureLog(t)
+	js := &fakeJetStream{subscribeErr: errors.New("no responders"), handlers: map[string]nats.MsgHandler{}}
+
+	err := serve(js, newHub(), ":0")
+
+	if err == nil || err.Error() != "failed to subscribe to dashboard: no responders" {
+		t.Fatalf("err = %v, want wrapped subscribe error", err)
+	}
+}
+
+func TestServe_returnsListenError(t *testing.T) {
+	logs := captureLog(t)
+	js := &fakeJetStream{handlers: map[string]nats.MsgHandler{}}
+
+	err := serve(js, newHub(), "bad-addr")
+
+	if err == nil || !strings.Contains(err.Error(), "missing port in address") {
+		t.Fatalf("err = %v, want listen error", err)
+	}
+	if len(js.handlers) != 2 || !strings.Contains(logs.String(), "WebSocket Gateway listening on bad-addr") {
+		t.Fatalf("handlers = %d, log = %q", len(js.handlers), logs.String())
+	}
+}
