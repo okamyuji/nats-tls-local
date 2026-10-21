@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"log"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -141,10 +142,8 @@ func TestServeWs_deliversBroadcastAndUnregistersOnClose(t *testing.T) {
 
 func TestWritePump_sendsPingEveryPeriod(t *testing.T) {
 	captureLog(t)
-	prev := pingPeriod
-	pingPeriod = 20 * time.Millisecond
-	t.Cleanup(func() { pingPeriod = prev })
 	hub := newHub()
+	hub.pingPeriod = 20 * time.Millisecond
 	go hub.run()
 	conn := dialGateway(t, hub)
 	t.Cleanup(func() { _ = conn.Close() })
@@ -294,5 +293,69 @@ func TestServe_returnsListenError(t *testing.T) {
 	}
 	if len(js.handlers) != 2 || !strings.Contains(logs.String(), "WebSocket Gateway listening on bad-addr") {
 		t.Fatalf("handlers = %d, log = %q", len(js.handlers), logs.String())
+	}
+}
+
+func TestNewServer_limitsHeaderReadTime(t *testing.T) {
+	srv := newServer(newHub(), ":0")
+
+	if srv.ReadHeaderTimeout != 10*time.Second || srv.IdleTimeout != 60*time.Second {
+		t.Fatalf("ReadHeaderTimeout = %v, IdleTimeout = %v; want 10s, 60s", srv.ReadHeaderTimeout, srv.IdleTimeout)
+	}
+	if srv.Addr != ":0" || srv.Handler == nil {
+		t.Fatalf("server = %+v, want addr :0 and a handler", srv)
+	}
+}
+
+func TestNewHub_pingsEvery30s(t *testing.T) {
+	if got := newHub().pingPeriod; got != 30*time.Second {
+		t.Fatalf("pingPeriod = %v, want 30s", got)
+	}
+}
+
+func TestAllowedOrigins_defaultsToDashboardAndViteDev(t *testing.T) {
+	t.Setenv("ALLOWED_ORIGINS", "")
+
+	got := allowedOrigins()
+
+	if !maps.Equal(got, map[string]bool{"http://localhost:3000": true, "http://localhost:5173": true}) {
+		t.Fatalf("allowedOrigins = %v", got)
+	}
+}
+
+func TestAllowedOrigins_readsCommaSeparatedEnv(t *testing.T) {
+	t.Setenv("ALLOWED_ORIGINS", "https://a.example, https://b.example ,")
+
+	got := allowedOrigins()
+
+	if !maps.Equal(got, map[string]bool{"https://a.example": true, "https://b.example": true}) {
+		t.Fatalf("allowedOrigins = %v", got)
+	}
+}
+
+func TestServeWs_checksOrigin(t *testing.T) {
+	captureLog(t)
+	hub := newHub()
+	go hub.run()
+	srv := httptest.NewServer(newMux(hub))
+	t.Cleanup(srv.Close)
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+
+	for origin, want := range map[string]int{
+		"https://evil.example":  http.StatusForbidden,
+		"http://localhost:3000": http.StatusSwitchingProtocols,
+		"":                      http.StatusSwitchingProtocols,
+	} {
+		h := http.Header{}
+		if origin != "" {
+			h.Set("Origin", origin)
+		}
+		conn, resp, err := websocket.DefaultDialer.Dial(url, h)
+		if err == nil {
+			_ = conn.Close()
+		}
+		if resp == nil || resp.StatusCode != want {
+			t.Fatalf("Origin %q: resp = %v, err = %v; want status %d", origin, resp, err, want)
+		}
 	}
 }

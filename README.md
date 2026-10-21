@@ -55,6 +55,8 @@ flowchart TB
 | ws-gateway | Go | NATS→WebSocketブリッジ |
 | dashboard | React + Vite | リアルタイムダッシュボード |
 
+ws-gatewayは、環境変数`ALLOWED_ORIGINS`（カンマ区切り）にあるOriginのブラウザからだけWebSocket接続を受け付けます。既定値は`http://localhost:3000,http://localhost:5173`です。ダッシュボードを別のOriginで配信するときは、この変数に追加してください。
+
 ## Subject設計
 
 | Subject | 用途 |
@@ -72,6 +74,7 @@ flowchart TB
 | LOGS | `logs.>` | 24時間 | ログの永続化 |
 | ALERTS | `alerts.>` | 7日間 | アラート履歴 |
 | METRICS | `metrics.>` | 1時間 | メトリクス集計 |
+| DASHBOARD | `dashboard.>` | 5分 | ダッシュボード更新 |
 
 ## ディレクトリ構成
 

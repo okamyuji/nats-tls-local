@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,10 +16,29 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for development
-	},
+var upgrader = websocket.Upgrader{CheckOrigin: checkOrigin(allowedOrigins())}
+
+// checkOrigin lets browsers on the allowed origins connect; clients without an Origin header are not browsers.
+func checkOrigin(allowed map[string]bool) func(*http.Request) bool {
+	return func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		return origin == "" || allowed[origin]
+	}
+}
+
+// allowedOrigins reads ALLOWED_ORIGINS (comma-separated); the default covers the compose dashboard and vite dev.
+func allowedOrigins() map[string]bool {
+	env := os.Getenv("ALLOWED_ORIGINS")
+	if env == "" {
+		env = "http://localhost:3000,http://localhost:5173"
+	}
+	allowed := map[string]bool{}
+	for o := range strings.SplitSeq(env, ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			allowed[o] = true
+		}
+	}
+	return allowed
 }
 
 // Hub maintains the set of active clients
@@ -27,6 +47,7 @@ type Hub struct {
 	broadcast  chan []byte
 	register   chan *Client
 	unregister chan *Client
+	pingPeriod time.Duration
 	mu         sync.RWMutex
 }
 
@@ -43,6 +64,7 @@ func newHub() *Hub {
 		broadcast:  make(chan []byte, 256),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
+		pingPeriod: 30 * time.Second,
 	}
 }
 
@@ -79,11 +101,8 @@ func (h *Hub) run() {
 	}
 }
 
-// pingPeriod is a var so tests can shorten it.
-var pingPeriod = 30 * time.Second
-
 func (c *Client) writePump() {
-	ticker := time.NewTicker(pingPeriod)
+	ticker := time.NewTicker(c.hub.pingPeriod)
 	defer func() {
 		ticker.Stop()
 		// Both pumps close the same conn, so the second Close always fails.
@@ -308,7 +327,13 @@ func serve(js nats.JetStreamContext, hub *Hub, addr string) error {
 	}
 
 	log.Printf("WebSocket Gateway listening on %s", addr)
-	return http.ListenAndServe(addr, newMux(hub))
+	return newServer(hub, addr).ListenAndServe()
+}
+
+// newServer limits header reads and idle keep-alive connections only;
+// Read/WriteTimeout would cut long-lived WebSocket connections.
+func newServer(hub *Hub, addr string) *http.Server {
+	return &http.Server{Addr: addr, Handler: newMux(hub), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
 }
 
 func newMux(hub *Hub) *http.ServeMux {
