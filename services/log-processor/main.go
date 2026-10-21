@@ -107,6 +107,34 @@ func (m *MetricsCollector) Snapshot() ProcessedMetrics {
 	return metrics
 }
 
+// handleLog records each log entry and publishes an alert for ERROR and CRITICAL entries.
+func handleLog(js nats.JetStreamContext, collector *MetricsCollector) nats.MsgHandler {
+	return func(msg *nats.Msg) {
+		var entry LogEntry
+		if err := json.Unmarshal(msg.Data, &entry); err != nil {
+			log.Printf("Failed to unmarshal log entry: %v", err)
+			if err := msg.Nak(); err != nil {
+				log.Printf("Failed to nak log entry: %v", err)
+			}
+			return
+		}
+
+		// Record metrics
+		collector.Record(entry)
+
+		// Process based on log level
+		if entry.Level == "ERROR" || entry.Level == "CRITICAL" {
+			if err := publishAlert(js, entry); err != nil {
+				log.Printf("Failed to publish alert: %v", err)
+			}
+		}
+
+		if err := msg.Ack(); err != nil {
+			log.Printf("Failed to ack log entry: %v", err)
+		}
+	}
+}
+
 func main() {
 	nc, js, err := connectNATS()
 	if err != nil {
@@ -124,30 +152,12 @@ func main() {
 	collector := NewMetricsCollector()
 
 	// Subscribe to all logs
-	sub, err := js.Subscribe("logs.>", func(msg *nats.Msg) {
-		var entry LogEntry
-		if err := json.Unmarshal(msg.Data, &entry); err != nil {
-			log.Printf("Failed to unmarshal log entry: %v", err)
-			msg.Nak()
-			return
-		}
-
-		// Record metrics
-		collector.Record(entry)
-
-		// Process based on log level
-		if entry.Level == "ERROR" || entry.Level == "CRITICAL" {
-			if err := publishAlert(js, entry); err != nil {
-				log.Printf("Failed to publish alert: %v", err)
-			}
-		}
-
-		msg.Ack()
-	}, nats.Durable("log-processor"), nats.ManualAck())
+	sub, err := js.Subscribe("logs.>", handleLog(js, collector), nats.Durable("log-processor"), nats.ManualAck())
 	if err != nil {
 		log.Fatalf("Failed to subscribe: %v", err)
 	}
-	defer sub.Unsubscribe()
+	// Shutdown path: the process exits right after, so a failed Unsubscribe leaves nothing to recover.
+	defer func() { _ = sub.Unsubscribe() }()
 
 	// Publish metrics every 5 seconds
 	ticker := time.NewTicker(5 * time.Second)
@@ -296,7 +306,8 @@ func publishAlert(js nats.JetStreamContext, entry LogEntry) error {
 	subject := fmt.Sprintf("alerts.%s", severity)
 	_, err = js.Publish(subject, data)
 
-	log.Printf("[ALERT] %s: %s - %s", severity, entry.Service, entry.Message)
+	// %q keeps a newline in a NATS payload from forging extra log lines.
+	log.Printf("[ALERT] %s: %q - %q", severity, entry.Service, entry.Message)
 	return err
 }
 
