@@ -5,8 +5,12 @@ import (
 	"errors"
 	"log"
 	"maps"
+	"os"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/nats-io/nats.go"
 )
@@ -20,12 +24,42 @@ func captureLog(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
-// fakeJetStream implements only Publish; any other call panics.
+// fakeJetStream implements only the calls run makes; any other call panics.
 type fakeJetStream struct {
 	nats.JetStreamContext
-	publishErr error
-	published  []string
+	publishErr    error
+	published     []string
+	streamInfoErr error
+	addStreamErr  error
+	added         []nats.StreamConfig
+	subscribeErr  error
+	mu            sync.Mutex
+	handler       nats.MsgHandler
 }
+
+func (f *fakeJetStream) StreamInfo(string, ...nats.JSOpt) (*nats.StreamInfo, error) {
+	return &nats.StreamInfo{}, f.streamInfoErr
+}
+
+func (f *fakeJetStream) AddStream(cfg *nats.StreamConfig, _ ...nats.JSOpt) (*nats.StreamInfo, error) {
+	f.added = append(f.added, *cfg)
+	return &nats.StreamInfo{}, f.addStreamErr
+}
+
+func (f *fakeJetStream) Subscribe(_ string, cb nats.MsgHandler, _ ...nats.SubOpt) (*nats.Subscription, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.handler = cb
+	return &nats.Subscription{}, f.subscribeErr
+}
+
+func (f *fakeJetStream) handlerFunc() nats.MsgHandler {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.handler
+}
+
+func (f *fakeJetStream) subscribed() bool { return f.handlerFunc() != nil }
 
 func (f *fakeJetStream) Publish(subj string, _ []byte, _ ...nats.PubOpt) (*nats.PubAck, error) {
 	f.published = append(f.published, subj)
@@ -133,5 +167,107 @@ func TestPublishAlert_escapesNewlinesInLogLine(t *testing.T) {
 	}
 	if n := strings.Count(logs.String(), "\n"); n != 1 {
 		t.Fatalf("log has %d lines, want 1: %q", n, logs.String())
+	}
+}
+
+func TestRun_returnsStreamCreationError(t *testing.T) {
+	captureLog(t)
+	js := &fakeJetStream{streamInfoErr: nats.ErrStreamNotFound, addStreamErr: errors.New("insufficient resources")}
+
+	err := run(js, nil, nil)
+
+	if err == nil || err.Error() != "failed to initialize streams: failed to create stream LOGS: insufficient resources" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRun_returnsSubscribeError(t *testing.T) {
+	captureLog(t)
+	js := &fakeJetStream{subscribeErr: errors.New("no responders")}
+
+	err := run(js, nil, nil)
+
+	if err == nil || err.Error() != "failed to subscribe: no responders" {
+		t.Fatalf("err = %v", err)
+	}
+	if len(js.added) != 0 {
+		t.Fatalf("added = %v, want none when streams exist", js.added)
+	}
+}
+
+// startRun runs run in a goroutine; tick and stop are unbuffered, so each send returns only after run took it.
+func startRun(t *testing.T, js *fakeJetStream) (tick chan time.Time, stop chan os.Signal, done chan error) {
+	t.Helper()
+	tick, stop, done = make(chan time.Time), make(chan os.Signal), make(chan error, 1)
+	go func() { done <- run(js, tick, stop) }()
+	return tick, stop, done
+}
+
+func waitHandler(t *testing.T, js *fakeJetStream, done chan error) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		select {
+		case err := <-done:
+			t.Fatalf("run returned early: %v", err)
+		default:
+		}
+		if js.subscribed() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("run did not subscribe within 2s")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestRun_createsMissingStreamsPublishesMetricsAndStops(t *testing.T) {
+	logs := captureLog(t)
+	js := &fakeJetStream{streamInfoErr: nats.ErrStreamNotFound}
+	tick, stop, done := startRun(t, js)
+	waitHandler(t, js, done)
+
+	tick <- time.Now() // no logs yet: nothing to publish
+	js.handlerFunc()(logMsg(`{"service":"api","level":"INFO"}`))
+	js.handlerFunc()(logMsg(`{"service":"api","level":"ERROR"}`))
+	tick <- time.Now()
+	stop <- os.Interrupt
+
+	if err := <-done; err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	want := []nats.StreamConfig{
+		{Name: "LOGS", Subjects: []string{"logs.>"}, MaxAge: 24 * time.Hour, Storage: nats.FileStorage},
+		{Name: "ALERTS", Subjects: []string{"alerts.>"}, MaxAge: 168 * time.Hour, Storage: nats.FileStorage},
+		{Name: "METRICS", Subjects: []string{"metrics.>"}, MaxAge: time.Hour, Storage: nats.MemoryStorage},
+		{Name: "DASHBOARD", Subjects: []string{"dashboard.>"}, MaxAge: 5 * time.Minute, Storage: nats.MemoryStorage},
+	}
+	if !reflect.DeepEqual(js.added, want) {
+		t.Fatalf("added = %+v, want %+v", js.added, want)
+	}
+	if got := strings.Join(js.published, ","); got != "alerts.error,metrics.processed" {
+		t.Fatalf("published = %s, want alerts.error,metrics.processed", got)
+	}
+	if !strings.Contains(logs.String(), "Published metrics: 2 logs, error_rate=50.00%") {
+		t.Fatalf("log = %q, want metrics summary", logs.String())
+	}
+}
+
+func TestRun_logsMetricsPublishFailure(t *testing.T) {
+	logs := captureLog(t)
+	js := &fakeJetStream{publishErr: errors.New("timeout")}
+	tick, stop, done := startRun(t, js)
+	waitHandler(t, js, done)
+
+	js.handlerFunc()(logMsg(`{"service":"api","level":"INFO"}`))
+	tick <- time.Now()
+	stop <- os.Interrupt
+	if err := <-done; err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if !strings.Contains(logs.String(), "Failed to publish metrics: timeout") {
+		t.Fatalf("log = %q, want publish failure", logs.String())
 	}
 }

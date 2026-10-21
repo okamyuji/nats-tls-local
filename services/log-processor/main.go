@@ -144,21 +144,6 @@ func main() {
 
 	log.Println("Connected to NATS, starting log processor...")
 
-	// Initialize JetStream streams
-	if err := initStreams(js); err != nil {
-		log.Fatalf("Failed to initialize streams: %v", err)
-	}
-
-	collector := NewMetricsCollector()
-
-	// Subscribe to all logs
-	sub, err := js.Subscribe("logs.>", handleLog(js, collector), nats.Durable("log-processor"), nats.ManualAck())
-	if err != nil {
-		log.Fatalf("Failed to subscribe: %v", err)
-	}
-	// Shutdown path: the process exits right after, so a failed Unsubscribe leaves nothing to recover.
-	defer func() { _ = sub.Unsubscribe() }()
-
 	// Publish metrics every 5 seconds
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -166,12 +151,32 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
+	if err := run(js, ticker.C, sigCh); err != nil {
+		log.Fatalf("Log processor stopped: %v", err)
+	}
+}
+
+// run creates the streams, processes logs.> and publishes metrics on each tick until stop fires.
+func run(js nats.JetStreamContext, tick <-chan time.Time, stop <-chan os.Signal) error {
+	if err := initStreams(js); err != nil {
+		return fmt.Errorf("failed to initialize streams: %w", err)
+	}
+
+	collector := NewMetricsCollector()
+
+	sub, err := js.Subscribe("logs.>", handleLog(js, collector), nats.Durable("log-processor"), nats.ManualAck())
+	if err != nil {
+		return fmt.Errorf("failed to subscribe: %w", err)
+	}
+	// Shutdown path: the process exits right after, so a failed Unsubscribe leaves nothing to recover.
+	defer func() { _ = sub.Unsubscribe() }()
+
 	for {
 		select {
-		case <-sigCh:
+		case <-stop:
 			log.Println("Shutting down log processor...")
-			return
-		case <-ticker.C:
+			return nil
+		case <-tick:
 			metrics := collector.Snapshot()
 			if metrics.TotalLogs > 0 {
 				if err := publishMetrics(js, metrics); err != nil {
