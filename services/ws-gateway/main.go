@@ -79,19 +79,25 @@ func (h *Hub) run() {
 	}
 }
 
+// pingPeriod is a var so tests can shorten it.
+var pingPeriod = 30 * time.Second
+
 func (c *Client) writePump() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.conn.Close()
+		// Both pumps close the same conn, so the second Close always fails.
+		_ = c.conn.Close()
 	}()
 
+	// SetWriteDeadline fails only on a broken conn; the WriteMessage that follows reports it.
 	for {
 		select {
 		case message, ok := <-c.send:
-			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if !ok {
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				// Best effort: the conn is closed right after either way.
+				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
@@ -100,7 +106,7 @@ func (c *Client) writePump() {
 			}
 
 		case <-ticker.C:
-			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
@@ -111,14 +117,14 @@ func (c *Client) writePump() {
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.unregister <- c
-		c.conn.Close()
+		_ = c.conn.Close()
 	}()
 
+	// SetReadDeadline fails only on a broken conn; the ReadMessage that follows reports it.
 	c.conn.SetReadLimit(4096)
-	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+	_ = c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
+		return c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	})
 
 	for {
@@ -224,6 +230,34 @@ func waitForStream(js nats.JetStreamContext, streamName string) error {
 	}
 }
 
+// forwardToHub wraps each NATS message in the WebSocket message format and broadcasts it.
+func forwardToHub(hub *Hub, kind string) nats.MsgHandler {
+	return func(msg *nats.Msg) {
+		wsMsg := map[string]any{
+			"subject": msg.Subject,
+			"data":    json.RawMessage(msg.Data),
+		}
+
+		data, err := json.Marshal(wsMsg)
+		if err != nil {
+			log.Printf("Failed to marshal %s: %v", kind, err)
+			return
+		}
+
+		hub.broadcast <- data
+		if err := msg.Ack(); err != nil {
+			log.Printf("Failed to ack %s: %v", kind, err)
+		}
+	}
+}
+
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write([]byte("OK")); err != nil {
+		log.Printf("Failed to write health response: %v", err)
+	}
+}
+
 func subscribeToNATS(js nats.JetStreamContext, hub *Hub) error {
 	// Wait for streams
 	if err := waitForStream(js, "DASHBOARD"); err != nil {
@@ -234,42 +268,13 @@ func subscribeToNATS(js nats.JetStreamContext, hub *Hub) error {
 	}
 
 	// Subscribe to dashboard updates
-	_, err := js.Subscribe("dashboard.>", func(msg *nats.Msg) {
-		// Wrap in WebSocket message format
-		wsMsg := map[string]interface{}{
-			"subject": msg.Subject,
-			"data":    json.RawMessage(msg.Data),
-		}
-
-		data, err := json.Marshal(wsMsg)
-		if err != nil {
-			log.Printf("Failed to marshal message: %v", err)
-			return
-		}
-
-		hub.broadcast <- data
-		msg.Ack()
-	}, nats.Durable("ws-gateway-dashboard"), nats.ManualAck())
+	_, err := js.Subscribe("dashboard.>", forwardToHub(hub, "message"), nats.Durable("ws-gateway-dashboard"), nats.ManualAck())
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to dashboard: %w", err)
 	}
 
 	// Subscribe to alerts for real-time display
-	_, err = js.Subscribe("alerts.>", func(msg *nats.Msg) {
-		wsMsg := map[string]interface{}{
-			"subject": msg.Subject,
-			"data":    json.RawMessage(msg.Data),
-		}
-
-		data, err := json.Marshal(wsMsg)
-		if err != nil {
-			log.Printf("Failed to marshal alert: %v", err)
-			return
-		}
-
-		hub.broadcast <- data
-		msg.Ack()
-	}, nats.Durable("ws-gateway-alerts"), nats.ManualAck())
+	_, err = js.Subscribe("alerts.>", forwardToHub(hub, "alert"), nats.Durable("ws-gateway-alerts"), nats.ManualAck())
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to alerts: %w", err)
 	}
@@ -301,10 +306,7 @@ func main() {
 		serveWs(hub, w, r)
 	})
 
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
+	http.HandleFunc("/health", healthHandler)
 
 	port := os.Getenv("PORT")
 	if port == "" {
