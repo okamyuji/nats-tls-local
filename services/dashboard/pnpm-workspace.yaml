@@ -1,0 +1,40 @@
+# 公開から7日未満の版を入れない。依存の乗っ取りへの備え。緊急時だけminimumReleaseAgeExcludeにname@versionで1版ずつ足す
+minimumReleaseAge: 10080
+# 7日未満の版の例外。1版ずつ書き、7日を過ぎたら消す
+minimumReleaseAgeExclude:
+  - '@babel/helper-string-parser@7.29.11'
+  - '@babel/parser@7.29.11'
+  - '@babel/types@7.29.11'
+  - '@oxc-project/types@0.155.0'
+  - '@rolldown/binding-android-arm-eabi@1.2.15'
+  - '@rolldown/binding-android-arm64@1.2.15'
+  - '@rolldown/binding-darwin-arm64@1.2.15'
+  - '@rolldown/binding-darwin-x64@1.2.15'
+  - '@rolldown/binding-freebsd-x64@1.2.15'
+  - '@rolldown/binding-linux-arm-gnueabihf@1.2.15'
+  - '@rolldown/binding-linux-arm64-gnu@1.2.15'
+  - '@rolldown/binding-linux-arm64-musl@1.2.15'
+  - '@rolldown/binding-linux-ppc64-gnu@1.2.15'
+  - '@rolldown/binding-linux-s390x-gnu@1.2.15'
+  - '@rolldown/binding-linux-x64-gnu@1.2.15'
+  - '@rolldown/binding-linux-x64-musl@1.2.15'
+  - '@rolldown/binding-openharmony-arm64@1.2.15'
+  - '@rolldown/binding-win32-arm64-msvc@1.2.15'
+  - '@rolldown/binding-win32-x64-msvc@1.2.15'
+  - '@typescript-eslint/eslint-plugin@8.72.0'
+  - '@typescript-eslint/parser@8.72.0'
+  - '@typescript-eslint/project-service@8.72.0'
+  - '@typescript-eslint/scope-manager@8.72.0'
+  - '@typescript-eslint/tsconfig-utils@8.72.0'
+  - '@typescript-eslint/type-utils@8.72.0'
+  - '@typescript-eslint/types@8.72.0'
+  - '@typescript-eslint/typescript-estree@8.72.0'
+  - '@typescript-eslint/utils@8.72.0'
+  - '@typescript-eslint/visitor-keys@8.72.0'
+  - es-toolkit@1.53.0
+  - ignore@7.0.14
+  - immer@11.2.9
+  - postcss@8.5.31
+  - rolldown@1.2.15
+  - typescript-eslint@8.72.0
+  - vite@8.3.5
