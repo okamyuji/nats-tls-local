@@ -1,6 +1,12 @@
-const { connect, AckPolicy, DeliverPolicy } = require('nats');
-const fs = require('fs');
-const path = require('path');
+const { connect } = require('@nats-io/transport-node');
+const {
+  jetstream,
+  jetstreamManager,
+  AckPolicy,
+  DeliverPolicy,
+  JetStreamApiError,
+  JetStreamApiCodes,
+} = require('@nats-io/jetstream');
 
 // Configuration
 const config = {
@@ -47,8 +53,8 @@ async function main() {
     const nc = await connect(opts);
     console.log(`Connected to NATS at ${config.natsUrl}`);
 
-    const js = nc.jetstream();
-    const jsm = await nc.jetstreamManager();
+    const js = jetstream(nc);
+    const jsm = await jetstreamManager(nc);
 
     // Wait for ALERTS stream to exist
     console.log('Waiting for ALERTS stream...');
@@ -59,7 +65,7 @@ async function main() {
         streamReady = true;
         console.log('ALERTS stream found');
       } catch (err) {
-        if (err.message.includes('stream not found')) {
+        if (isStreamNotFound(err)) {
           await new Promise(resolve => setTimeout(resolve, 2000));
         } else {
           throw err;
@@ -98,7 +104,8 @@ async function main() {
           msg.ack();
         } catch (err) {
           console.error('Failed to process alert:', err);
-          msg.nak();
+          // 解析や表示の失敗は再配信しても直らない。nakだと無期限に再配信され続ける
+          msg.term();
         }
       }
     })();
@@ -119,6 +126,10 @@ async function main() {
     console.error('Failed to connect to NATS:', err);
     process.exit(1);
   }
+}
+
+function isStreamNotFound(err) {
+  return err instanceof JetStreamApiError && err.code === JetStreamApiCodes.StreamNotFound;
 }
 
 function processAlert(alert) {
