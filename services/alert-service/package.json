@@ -4,10 +4,12 @@
   "description": "NATS Alert Service",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test"
   },
+  "packageManager": "pnpm@11.20.0",
   "dependencies": {
-    "nats": "^2.29.3"
-  },
-  "packageManager": "pnpm@11.20.0"
+    "@nats-io/jetstream": "^3.4.0",
+    "@nats-io/transport-node": "^3.4.0"
+  }
 }
