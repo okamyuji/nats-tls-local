@@ -84,11 +84,14 @@ test('prints an alert and acks it', async () => {
   assert.equal(info.num_ack_pending, 0);
 });
 
-test('naks a message that is not JSON so it is redelivered', async () => {
+test('terminates a message that is not JSON instead of redelivering it', async () => {
   nats('pub', 'alerts.bad', 'not-json');
   await waitFor('Failed to process alert');
+  await new Promise((resolve) => setTimeout(resolve, 1000));
   const info = JSON.parse(nats('consumer', 'info', 'ALERTS', 'alert-service', '--json'));
-  assert.ok(info.num_redelivered >= 1, `num_redelivered=${info.num_redelivered}`);
+  assert.equal(info.num_redelivered, 0);
+  assert.equal(info.num_ack_pending, 0);
+  assert.equal(output.split('Failed to process alert').length - 1, 1);
 });
 
 test('drains and exits 0 on SIGTERM', async () => {

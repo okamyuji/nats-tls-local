@@ -104,7 +104,8 @@ async function main() {
           msg.ack();
         } catch (err) {
           console.error('Failed to process alert:', err);
-          msg.nak();
+          // 解析や表示の失敗は再配信しても直らない。nakだと無期限に再配信され続ける
+          msg.term();
         }
       }
     })();
