@@ -1,8 +1,10 @@
-FROM node:20-alpine
+FROM node:24-alpine
 
 WORKDIR /app
-COPY package*.json ./
-RUN npm install --production
+# corepackはpackageManagerの版のpnpmを使う。pnpm 11はNode 20で動かない
+RUN corepack enable
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile --prod
 COPY index.js ./
 
-CMD ["npm", "start"]
+CMD ["node", "index.js"]

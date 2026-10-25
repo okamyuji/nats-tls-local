@@ -7,6 +7,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "nats": "^2.18.0"
-  }
+    "nats": "^2.29.3"
+  },
+  "packageManager": "pnpm@11.20.0"
 }
