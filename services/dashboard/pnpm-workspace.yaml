@@ -21,24 +21,10 @@ minimumReleaseAgeExclude:
   - '@rolldown/binding-openharmony-arm64@1.2.15'
   - '@rolldown/binding-win32-arm64-msvc@1.2.15'
   - '@rolldown/binding-win32-x64-msvc@1.2.15'
-  - '@typescript-eslint/eslint-plugin@8.72.0'
-  - '@typescript-eslint/parser@8.72.0'
-  - '@typescript-eslint/project-service@8.72.0'
-  - '@typescript-eslint/scope-manager@8.72.0'
-  - '@typescript-eslint/tsconfig-utils@8.72.0'
-  - '@typescript-eslint/type-utils@8.72.0'
-  - '@typescript-eslint/types@8.72.0'
-  - '@typescript-eslint/typescript-estree@8.72.0'
-  - '@typescript-eslint/utils@8.72.0'
-  - '@typescript-eslint/visitor-keys@8.72.0'
   - es-toolkit@1.53.0
-  - ignore@7.0.14
   - immer@11.2.9
   - postcss@8.5.31
   - rolldown@1.2.15
-  - typescript-eslint@8.72.0
   - vite@8.3.5
-  - minimatch@11.0.3
-  - '@isaacs/nonrecursive-glob-match@1.0.3'
 overrides:
   'minimatch@>=10.0.0 <11.0.1': ^11.0.3
