@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [services/log-processor, services/log-publisher, services/ws-gateway]
+    uses: okamyuji/reusable-workflows/.github/workflows/go-ci.yml@v1
+    with:
+      working-directory: ${{ matrix.dir }}
+
+  alert-service:
+    uses: okamyuji/reusable-workflows/.github/workflows/node-ci.yml@v1
+    with:
+      working-directory: services/alert-service
+
+  dashboard:
+    uses: okamyuji/reusable-workflows/.github/workflows/node-ci.yml@v1
+    with:
+      working-directory: services/dashboard
+      # build is tsc -b && vite build, so it type-checks too
+      typecheck-command: run build
+
+  metrics-aggregator:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/metrics-aggregator
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          # same version as the Dockerfile
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # no tests yet; importing proves the pinned dependencies install and their APIs still resolve
+      - name: Import check
+        run: python -c "import main"
+
+  security:
+    uses: okamyuji/reusable-workflows/.github/workflows/security-scan.yml@v1
