@@ -2,7 +2,7 @@ module log-processor
 
 go 1.26.10
 
-require github.com/nats-io/nats.go v1.55.0
+require github.com/nats-io/nats.go v1.56.0
 
 require (
 	github.com/klauspost/compress v1.20.0 // indirect
