@@ -9,7 +9,7 @@
   },
   "packageManager": "pnpm@11.20.0",
   "dependencies": {
-    "@nats-io/jetstream": "^3.4.0",
-    "@nats-io/transport-node": "^3.4.0"
+    "@nats-io/jetstream": "^3.5.0",
+    "@nats-io/transport-node": "^3.5.0"
   }
 }
